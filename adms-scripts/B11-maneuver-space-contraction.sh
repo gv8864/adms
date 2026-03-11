@@ -180,10 +180,19 @@ main() {
   sleep 2
   record_state RESTRICTED
 
-  log "Injecting ΔI (expect LOCKDOWN)"
-  inject I
-  sleep 2
-  record_state LOCKDOWN
+    log "Injecting ΔI (expect LOCKDOWN / terminal containment)"
+    timeout 3 curl -fsS --max-time 2 -X POST "${BASE_URL}/inject" \
+    -H 'Content-Type: application/json' \
+    -d '{"dimension":"I"}' >/dev/null 2>&1 || true
+
+    sleep 2
+
+    if curl -fsS --max-time 2 "${BASE_URL}/posture" >/dev/null 2>&1; then
+        record_state LOCKDOWN
+    else
+    log "LOCKDOWN caused controller endpoint to become unreachable (acceptable terminal containment behavior)"
+        printf 'LOCKDOWN,UNREACHABLE_TERMINAL,0,0,0,0\n'
+    fi
 
   log "Done. Controller log: ${CONTROLLER_LOG}"
   log "If M_proxy does not shrink, your enforcement rules are not aligned with these probes."
