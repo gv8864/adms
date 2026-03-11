@@ -101,6 +101,10 @@ func New(cfg Config, enforcer Enforcer, logPath string) (*Controller, error) {
 		startTime: time.Now(),
 	}
 
+	// Write startup entry so the log file is non-empty immediately
+	logger.Printf("ADMS controller initialized: tau=%s q=%d delta=%d",
+		cfg.Tau, cfg.Q, cfg.Delta)
+
 	return c, nil
 }
 

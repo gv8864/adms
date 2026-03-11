@@ -43,6 +43,7 @@ func main() {
 
 	log.Printf("ADMS Controller starting: tau=%s q=%d delta=%d sensor=%s dry-run=%v",
 		*tau, *q, *delta, *sensorMode, *dryRun)
+	log.Printf("Log path: %q, Metrics path: %q", *logPath, *metricsPath)
 
 	// Initialize enforcement
 	enforcer := enforcement.NewLinuxEnforcer(enforcement.LinuxEnforcerConfig{
