@@ -1,0 +1,6 @@
+bin/
+*.exe
+/adms-controller
+/tmp/
+*.json.bak
+/etc/adms/operator.key

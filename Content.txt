@@ -1,0 +1,8 @@
+What was built (by component):
+The controller (pkg/controller/, ~800 lines Go) implements the complete state machine: the transition function with equations 10–13, highest-severity-wins precedence, monotonic escalation (A1), quiet-interval and dwell-time tracking for stepwise rollback, break-glass override, and the M1–M5 metrics collection. It exposes an HTTP API for posture queries, metrics export, break-glass, and manual drift injection.
+The signal layer (pkg/signals/, ~300 lines Go) defines the DriftVector type with B(t), the authorization mask A(t) with RSA signature verification and TTL checking, and the effective drift computation B̃(t) = B(t) ∧ ¬A(t).
+The sensor integration (pkg/sensors/, ~300 lines Go) reads Tetragon's JSON event stream, classifies each event into one of the five drift dimensions based on policy name and event content, and accumulates per-interval drift vectors that the controller drains every τ seconds.
+The enforcement backend (pkg/enforcement/, ~200 lines Go) applies posture-specific controls using Linux primitives: auditctl for OBSERVE, chattr/sysctl/nftables for RESTRICTED, and cgroup freezer/read-only remount for LOCKDOWN. Supports dry-run mode.
+The test suite includes 308 lines of Go unit tests (n=50 determinism, all four scenarios, precedence, monotonicity, rollback, hysteresis, break-glass) plus a shell integration test runner that exercises the live controller via HTTP API.
+Five Tetragon TracingPolicy YAMLs hook the kernel events for each drift dimension: commit_creds/cap_capable for ΔP, security_file_open on persistence loci for ΔD, sched_process_exec from writable paths and security_task_setns for ΔE, tcp_connect outside allow-list for ΔN, and ima_file_check for ΔI.
+

@@ -1,0 +1,24 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: adms-identity-drift
+spec:
+  kprobes:
+    # Detect IMA measurement failures / unsigned binary execution
+    - call: "ima_file_check"
+      syscall: false
+      args:
+        - index: 0
+          type: "file"
+      selectors:
+        - matchActions:
+            - action: Post
+    # Detect execution of binaries not in expected paths
+    - call: "security_bprm_check"
+      syscall: false
+      args:
+        - index: 0
+          type: "bprm"
+      selectors:
+        - matchActions:
+            - action: Post

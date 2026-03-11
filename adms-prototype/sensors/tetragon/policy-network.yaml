@@ -1,0 +1,21 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: adms-network-drift
+spec:
+  kprobes:
+    - call: "tcp_connect"
+      syscall: false
+      args:
+        - index: 0
+          type: "sock"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "NotDAddr"
+              values:
+                - "10.0.0.0/8"
+                - "172.16.0.0/12"
+                - "127.0.0.0/8"
+          matchActions:
+            - action: Post

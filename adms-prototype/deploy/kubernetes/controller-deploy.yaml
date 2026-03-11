@@ -1,0 +1,85 @@
+---
+# deploy/kubernetes/controller-deploy.yaml
+# ADMS controller as a DaemonSet (one per node)
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: adms-controller
+  namespace: adms-test
+  labels:
+    app: adms-controller
+spec:
+  selector:
+    matchLabels:
+      app: adms-controller
+  template:
+    metadata:
+      labels:
+        app: adms-controller
+    spec:
+      hostPID: true
+      hostNetwork: true
+      serviceAccountName: adms-controller
+      containers:
+        - name: controller
+          image: adms-controller:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--tau=1s"
+            - "--q=60"
+            - "--delta=3"
+            - "--sensor=tetragon"
+            - "--http=:8080"
+            - "--dry-run=false"
+            - "--metrics=/var/log/adms/metrics.json"
+          securityContext:
+            privileged: true
+          ports:
+            - containerPort: 8080
+              hostPort: 8080
+          volumeMounts:
+            - name: adms-config
+              mountPath: /etc/adms
+              readOnly: true
+            - name: adms-run
+              mountPath: /var/run/adms
+            - name: adms-log
+              mountPath: /var/log/adms
+            - name: sys-fs
+              mountPath: /sys/fs
+      volumes:
+        - name: adms-config
+          secret:
+            secretName: adms-operator-keys
+        - name: adms-run
+          hostPath:
+            path: /var/run/adms
+            type: DirectoryOrCreate
+        - name: adms-log
+          hostPath:
+            path: /var/log/adms
+            type: DirectoryOrCreate
+        - name: sys-fs
+          hostPath:
+            path: /sys/fs
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: adms-controller
+  namespace: adms-test
+
+---
+# Store operator keys as a Secret
+# Create with: kubectl create secret generic adms-operator-keys \
+#   --from-file=operator.pub=/etc/adms/operator.pub \
+#   -n adms-test
+apiVersion: v1
+kind: Secret
+metadata:
+  name: adms-operator-keys
+  namespace: adms-test
+type: Opaque
+data: {}

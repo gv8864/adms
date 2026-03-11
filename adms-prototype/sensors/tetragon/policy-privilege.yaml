@@ -1,0 +1,23 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: adms-privilege-drift
+spec:
+  kprobes:
+    - call: "commit_creds"
+      syscall: false
+      args:
+        - index: 0
+          type: "cred"
+      selectors:
+        - matchActions:
+            - action: Post
+    - call: "cap_capable"
+      syscall: false
+      args:
+        - index: 2
+          type: "int"
+      selectors:
+        - matchActions:
+            - action: Post
+              rateLimit: "1m"

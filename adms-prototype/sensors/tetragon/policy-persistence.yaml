@@ -1,0 +1,25 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: adms-persistence-drift
+spec:
+  kprobes:
+    - call: "security_file_open"
+      syscall: false
+      args:
+        - index: 0
+          type: "file"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc/systemd/system"
+                - "/etc/cron.d"
+                - "/etc/cron.daily"
+                - "/etc/cron.hourly"
+                - "/etc/init.d"
+                - "/lib/modules"
+                - "/usr/lib/systemd/system"
+          matchActions:
+            - action: Post

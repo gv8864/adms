@@ -1,0 +1,28 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: adms-execution-drift
+spec:
+  tracepoints:
+    - subsystem: "sched"
+      event: "sched_process_exec"
+      args:
+        - index: 4
+          type: "string"
+      selectors:
+        - matchArgs:
+            - index: 4
+              operator: "Prefix"
+              values:
+                - "/tmp"
+                - "/dev/shm"
+                - "/var/tmp"
+                - "/run"
+          matchActions:
+            - action: Post
+  kprobes:
+    - call: "security_task_setns"
+      syscall: false
+      selectors:
+        - matchActions:
+            - action: Post

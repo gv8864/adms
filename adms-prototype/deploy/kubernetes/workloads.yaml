@@ -1,0 +1,96 @@
+---
+# deploy/kubernetes/workloads.yaml
+# Test workloads for ADMS evaluation: web service, CI/CD deployer, batch job
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: adms-test
+
+---
+# Workload 1: Baseline web service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: adms-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-test
+  template:
+    metadata:
+      labels:
+        app: nginx-test
+        adms-posture: normal
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+---
+# Workload 2: CI/CD-style deployer (for authorized operations testing)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-deployer
+  namespace: adms-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cicd-deployer
+  template:
+    metadata:
+      labels:
+        app: cicd-deployer
+    spec:
+      serviceAccountName: cicd-deployer
+      containers:
+        - name: deployer
+          image: bitnami/kubectl:latest
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cicd-deployer
+  namespace: adms-test
+
+---
+# Workload 3: Batch job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-test
+  namespace: adms-test
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: batch-test
+        spec:
+          containers:
+            - name: batch
+              image: busybox:1.36
+              command: ["sh", "-c", "echo 'batch run at $(date)' && sleep 10"]
+              resources:
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+          restartPolicy: OnFailure
