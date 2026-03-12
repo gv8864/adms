@@ -16,6 +16,8 @@
 # Notes:
 #   - This script starts adms-controller unless START_CONTROLLER=0
 #   - Run in a test VM / namespace sandbox, not on a production host
+#   - LOCKDOWN may intentionally sever the controller endpoint; this is
+#     treated as acceptable terminal containment behavior
 set -Eeuo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
@@ -105,18 +107,23 @@ inject() {
     -d "{\"dimension\":\"${dim}\"}" >/dev/null
 }
 
+inject_terminal() {
+  local dim="$1"
+  timeout 3 curl -fsS --max-time 2 -X POST "${BASE_URL}/inject" \
+    -H 'Content-Type: application/json' \
+    -d "{\"dimension\":\"${dim}\"}" >/dev/null 2>&1 || true
+}
+
 # ------------------------------
 # Enforcement-aligned probes
 # Return 1 if permitted, 0 if blocked
 # ------------------------------
 
 probe_egress_new() {
-  # TCP connect attempt to external IP/port
   timeout 2 bash -c 'echo > /dev/tcp/1.1.1.1/80' >/dev/null 2>&1 && echo 1 || echo 0
 }
 
 probe_protected_persistence_write() {
-  # Probe an actually protected persistence path
   touch "${PERSIST_PATH}" >/dev/null 2>&1 && {
     rm -f "${PERSIST_PATH}" >/dev/null 2>&1 || true
     echo 1
@@ -128,7 +135,6 @@ probe_module_load() {
 
   command -v modprobe >/dev/null 2>&1 || { echo 0; return; }
 
-  # Real module load attempt, not dry-run
   modprobe dummy >/dev/null 2>&1 && {
     modprobe -r dummy >/dev/null 2>&1 || true
     echo 1
@@ -157,7 +163,8 @@ measure_proxy() {
 record_state() {
   local label="$1"
   local pname row
-  pname="$(posture_name 2>/dev/null || echo unknown)"
+  pname="$(posture_name 2>/dev/null || true)"
+  [[ -n "${pname:-}" ]] || pname="unknown"
   row="$(measure_proxy)"
   printf '%s,%s,%s\n' "$label" "$pname" "$row"
 }
@@ -180,19 +187,16 @@ main() {
   sleep 2
   record_state RESTRICTED
 
-    log "Injecting ΔI (expect LOCKDOWN / terminal containment)"
-    timeout 3 curl -fsS --max-time 2 -X POST "${BASE_URL}/inject" \
-    -H 'Content-Type: application/json' \
-    -d '{"dimension":"I"}' >/dev/null 2>&1 || true
+  log "Injecting ΔI (expect LOCKDOWN / terminal containment)"
+  inject_terminal I
+  sleep 2
 
-    sleep 2
-
-    if curl -fsS --max-time 2 "${BASE_URL}/posture" >/dev/null 2>&1; then
-        record_state LOCKDOWN
-    else
-    log "LOCKDOWN caused controller endpoint to become unreachable (acceptable terminal containment behavior)"
-        printf 'LOCKDOWN,UNREACHABLE_TERMINAL,0,0,0,0\n'
-    fi
+  if curl -fsS --max-time 2 "${BASE_URL}/posture" >/dev/null 2>&1; then
+    record_state LOCKDOWN
+  else
+    log "LOCKDOWN rendered the controller endpoint unreachable; treating this as expected terminal containment"
+    printf 'LOCKDOWN,UNREACHABLE_TERMINAL,0,0,0,0\n'
+  fi
 
   log "Done. Controller log: ${CONTROLLER_LOG}"
   log "If M_proxy does not shrink, your enforcement rules are not aligned with these probes."
