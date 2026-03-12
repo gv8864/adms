@@ -12,14 +12,25 @@ source "$REPO_ROOT/lib/common.sh"
 set -euo pipefail
 
 LOG="/tmp/adms-C4-M5.log"
+CTRL_PID=""
+
+cleanup() {
+    if [ -n "${CTRL_PID:-}" ]; then
+        kill "$CTRL_PID" 2>/dev/null || true
+        wait "$CTRL_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
 echo "=== C4: M5 Recovery and Liveness ===" | tee "$LOG"
 echo "Started: $(date)" | tee -a "$LOG"
+
+mkdir -p /var/log/adms
+: > /var/log/adms/controller.log
 
 # Kill any existing controller
 pkill -f adms-controller 2>/dev/null || true
 sleep 2
-
-> /var/log/adms/controller.log
 
 # Use short parameters so rollback completes in reasonable time
 # q=10, delta=2: each rollback step takes ~12s, total ~36s
@@ -33,8 +44,8 @@ echo "Expected L_rollback: ~$((3 * (Q_VAL + D_VAL)))s" | tee -a "$LOG"
     --dry-run \
     --sensor=inject \
     --tau=1s \
-    --q=$Q_VAL \
-    --delta=$D_VAL \
+    --q="$Q_VAL" \
+    --delta="$D_VAL" \
     --http=:8080 \
     --log=/var/log/adms/controller.log \
     --metrics=/tmp/adms-C4-metrics.json &
@@ -43,10 +54,12 @@ sleep 3
 
 echo "" | tee -a "$LOG"
 echo "--- Escalating to LOCKDOWN via ΔI ---" | tee -a "$LOG"
-curl -sf -X POST http://localhost:8080/inject -d '{"dimension": "I"}' > /dev/null
+curl -sf -X POST http://localhost:8080/inject \
+    -H 'Content-Type: application/json' \
+    -d '{"dimension":"I"}' >/dev/null
 sleep 2
 
-POSTURE=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
+POSTURE=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo "ERROR")
 echo "Posture after ΔI: $POSTURE" | tee -a "$LOG"
 
 echo "" | tee -a "$LOG"
@@ -57,6 +70,7 @@ while true; do
     LEVEL=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['level'])" 2>/dev/null || echo "ERROR")
     NAME=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo "ERROR")
     ELAPSED=$(($(date +%s) - T_START))
+
     echo "  t+${ELAPSED}s: posture=$NAME ($LEVEL)" | tee -a "$LOG"
 
     if [ "$LEVEL" = "0" ]; then
@@ -76,18 +90,23 @@ done
 
 echo "" | tee -a "$LOG"
 echo "--- TEST: Rollback blocked during active drift ---" | tee -a "$LOG"
-curl -sf -X POST http://localhost:8080/inject -d '{"dimension": "E"}' > /dev/null
+
+curl -sf -X POST http://localhost:8080/inject \
+    -H 'Content-Type: application/json' \
+    -d '{"dimension":"E"}' >/dev/null
 sleep 2
 
-echo "Injected ΔE, posture: $(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")" | tee -a "$LOG"
+echo "Injected ΔE, posture: $(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo ERROR)" | tee -a "$LOG"
 
 # Keep injecting drift — rollback should not happen
 for i in $(seq 1 5); do
-    curl -sf -X POST http://localhost:8080/inject -d '{"dimension": "E"}' > /dev/null
+    curl -sf -X POST http://localhost:8080/inject \
+        -H 'Content-Type: application/json' \
+        -d '{"dimension":"E"}' >/dev/null
     sleep 3
 done
 
-POSTURE=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
+POSTURE=$(curl -sf http://localhost:8080/posture | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo "ERROR")
 echo "After continuous drift: posture=$POSTURE (should still be OBSERVE, not NORMAL)" | tee -a "$LOG"
 if [ "$POSTURE" != "NORMAL" ]; then
     echo "PASS: rollback blocked during active drift" | tee -a "$LOG"
@@ -96,7 +115,9 @@ else
 fi
 
 # Reset
-curl -sf -X POST http://localhost:8080/breakglass -d '{"reason": "M5 test complete"}' > /dev/null
+curl -sf -X POST http://localhost:8080/breakglass \
+    -H 'Content-Type: application/json' \
+    -d '{"reason":"M5 test complete"}' >/dev/null || true
 
 echo "" | tee -a "$LOG"
 echo "--- Controller log (rollback steps visible) ---" | tee -a "$LOG"
@@ -114,9 +135,6 @@ else
     echo "FAIL: non-stepwise rollback detected:" | tee -a "$LOG"
     echo "$NON_STEPWISE" | tee -a "$LOG"
 fi
-
-kill $CTRL_PID 2>/dev/null || true
-wait $CTRL_PID 2>/dev/null || true
 
 echo "" | tee -a "$LOG"
 echo "=== C4 Complete ===" | tee -a "$LOG"
