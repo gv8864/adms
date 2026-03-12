@@ -23,8 +23,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+json_field() {
+  local file="$1"
+  local field="$2"
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], "ERR"))' \
+    "$file" "$field" 2>/dev/null || echo "ERR"
+}
+
 adms_require_bin curl
 adms_require_bin nft
+adms_require_bin python3
 [[ -x "$ADMS_BREAKGLASS_BIN" ]] || {
   echo "Missing breakglass: $ADMS_BREAKGLASS_BIN" >&2
   exit 1
@@ -38,28 +46,18 @@ adms_start_controller
 adms_wait_controller
 
 adms_log "Preflight posture"
-adms_posture_raw > "$ARTIFACT_DIR/posture.pre.json" 2>/dev/null || true
+if ! adms_posture_raw > "$ARTIFACT_DIR/posture.pre.json" 2>/dev/null; then
+  adms_log "FAIL: could not read initial /posture"
+  [[ -f /var/log/adms/controller.log ]] && cat /var/log/adms/controller.log || true
+  exit 1
+fi
 cat "$ARTIFACT_DIR/posture.pre.json" || true
 
-PRE_LEVEL="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.pre.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("level", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
-PRE_NAME="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.pre.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("name", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
+PRE_LEVEL="$(json_field "$ARTIFACT_DIR/posture.pre.json" level)"
+PRE_NAME="$(json_field "$ARTIFACT_DIR/posture.pre.json" name)"
 
-adms_log "Initial posture: level=${PRE_LEVEL:-ERR} name=${PRE_NAME:-ERR}"
-if [[ "${PRE_LEVEL:-ERR}" != "0" ]]; then
+adms_log "Initial posture: level=${PRE_LEVEL} name=${PRE_NAME}"
+if [[ "${PRE_LEVEL}" != "0" || "${PRE_NAME}" != "NORMAL" ]]; then
   adms_log "FAIL: controller did not start in NORMAL posture"
   exit 1
 fi
@@ -98,26 +96,12 @@ while (( SECONDS < deadline )); do
   if curl -fsS --max-time "$ADMS_HTTP_TIMEOUT" \
     "$ADMS_BASE_URL/posture" > "$ARTIFACT_DIR/posture.poll.json" 2>/dev/null; then
 
-    POST_LEVEL="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.poll.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("level", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
-    POST_NAME="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.poll.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("name", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
+    POST_LEVEL="$(json_field "$ARTIFACT_DIR/posture.poll.json" level)"
+    POST_NAME="$(json_field "$ARTIFACT_DIR/posture.poll.json" name)"
     cp -f "$ARTIFACT_DIR/posture.poll.json" "$ARTIFACT_DIR/posture.lock.json" >/dev/null 2>&1 || true
-    adms_log "Observed posture: level=${POST_LEVEL:-ERR} name=${POST_NAME:-ERR}"
+    adms_log "Observed posture: level=${POST_LEVEL} name=${POST_NAME}"
 
-    if [[ "${POST_LEVEL:-0}" != "0" ]]; then
+    if [[ "${POST_LEVEL}" != "0" ]]; then
       break
     fi
   else
@@ -138,14 +122,14 @@ if [[ -r /sys/fs/cgroup/user.slice/cgroup.freeze ]]; then
 fi
 
 # Decide outcome
-if [[ "$POSTURE_REACHABLE" == "1" && "${POST_LEVEL:-0}" == "0" ]]; then
+if [[ "$POSTURE_REACHABLE" == "1" && "${POST_LEVEL}" == "0" ]]; then
   adms_log "FAIL: inject did not move posture out of NORMAL within ${LOCKDOWN_WAIT}s"
   adms_log "This suggests inject is not wired, masking is active, or controller is not processing identity drift."
   exit 1
 fi
 
 if [[ "$POSTURE_REACHABLE" == "1" ]]; then
-  adms_log "LOCKDOWN evidence captured: level=${POST_LEVEL:-ERR} name=${POST_NAME:-ERR}"
+  adms_log "LOCKDOWN evidence captured: level=${POST_LEVEL} name=${POST_NAME}"
 else
   adms_log "LOCKDOWN likely caused terminal containment (endpoint unreachable)"
 fi
@@ -159,23 +143,9 @@ sleep 2
 if curl -fsS --max-time "$ADMS_HTTP_TIMEOUT" \
   "$ADMS_BASE_URL/posture" > "$ARTIFACT_DIR/posture.recovered.json" 2>/dev/null; then
   cat "$ARTIFACT_DIR/posture.recovered.json" || true
-  REC_LEVEL="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.recovered.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("level", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
-  REC_NAME="$(python3 - <<'PY' 2>/dev/null < "$ARTIFACT_DIR/posture.recovered.json" || true
-import sys, json
-try:
-    print(json.load(sys.stdin).get("name", "ERR"))
-except Exception:
-    print("ERR")
-PY
-)"
-  adms_log "Recovered posture: level=${REC_LEVEL:-ERR} name=${REC_NAME:-ERR}"
+  REC_LEVEL="$(json_field "$ARTIFACT_DIR/posture.recovered.json" level)"
+  REC_NAME="$(json_field "$ARTIFACT_DIR/posture.recovered.json" name)"
+  adms_log "Recovered posture: level=${REC_LEVEL} name=${REC_NAME}"
 else
   adms_log "Controller posture endpoint still unavailable after recovery attempt"
 fi
@@ -183,4 +153,3 @@ fi
 [[ -n "${FAILSAFE_PID:-}" ]] && kill "$FAILSAFE_PID" >/dev/null 2>&1 || true
 adms_log "B10 safe test complete"
 adms_log "Artifacts written to: $ARTIFACT_DIR"
-
